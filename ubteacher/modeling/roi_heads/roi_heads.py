@@ -16,7 +16,46 @@ from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from ubteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayers
 
 import numpy as np
-from detectron2.modeling.poolers import ROIPooler
+from detectron2.modeling.poolers import ROIPooler, convert_boxes_to_pooler_format
+
+
+class GRoIE(ROIPooler): 
+
+    def __init__ (
+        self,
+        *args,**kwargs
+    ):
+        
+        super().__init__(*args,**kwargs)
+        self.pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1) #definisco convoluzione che serve tra le features
+        
+        self.post_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
+
+
+
+    def forward(self, x: List[torch.Tensor], box_lists: List[Boxes]):
+        
+        num_level_assignments = len(x)
+        pooler_fmt_boxes = convert_boxes_to_pooler_format(box_lists)
+        num_channels = x[0].shape[1]
+        output_size = self.output_size[0]
+        roi_feats = x[0].new_zeros(
+            pooler_fmt_boxes.size(0), num_channels, output_size, output_size)
+    
+        #Apply the pooler to a levele and extract the features
+        for i in range(num_level_assignments):
+            roi_features_t = self.level_poolers[i](x[i], pooler_fmt_boxes) #x is feats[i], pooler_fmt_boxes is rois
+            
+            # apply pre-processing to a RoI extracted from each layer
+            roi_features_t = self.pre_module(roi_features_t)
+
+            # and sum them all
+            roi_feats += roi_features_t
+
+        #apply post-processing (sum) before return the result
+        roi_feats = self.post_module(roi_feats)
+        return roi_feats
+
 
 
 @ROI_HEADS_REGISTRY.register()
@@ -36,12 +75,14 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
         assert len(set(in_channels)) == 1, in_channels
         in_channels = in_channels[0]
 
-        box_pooler = ROIPooler(
+        box_pooler = GRoIE(
             output_size=pooler_resolution,
             scales=pooler_scales,
             sampling_ratio=sampling_ratio,
             pooler_type=pooler_type,
-        )
+        ) 
+
+
         box_head = build_box_head(
             cfg,
             ShapeSpec(
