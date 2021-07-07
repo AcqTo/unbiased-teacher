@@ -18,6 +18,37 @@ from ubteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayer
 import numpy as np
 from detectron2.modeling.poolers import ROIPooler, convert_boxes_to_pooler_format
 
+def build_pre_processing(cfg):
+    
+    conv_type=cfg.MODEL.ROI_CONV_PRE
+
+    if conv_type == "Conv3":
+        pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
+    
+    elif conv_type == "Conv5":
+        pre_module=torch.nn.Conv2d(256,256,kernel_size=5,padding=2)
+    
+    elif conv_type == "Conv7":
+        pre_module=torch.nn.Conv2d(256,256,kernel_size=7,padding=3)
+
+    return pre_module
+
+def build_post_processing(cfg):
+    
+    conv_type=cfg.MODEL.ROI_CONV_POST
+
+    if conv_type == "Conv3":
+        post_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
+    
+    elif conv_type == "Conv5":
+        post_module=torch.nn.Conv2d(256,256,kernel_size=5,padding=2)
+    
+    elif conv_type == "Conv7":
+        post_module=torch.nn.Conv2d(256,256,kernel_size=7,padding=3)
+
+    return post_module
+
+
 
 def build_roi_extractor(cfg, input_shape):
 
@@ -46,6 +77,7 @@ def build_roi_extractor(cfg, input_shape):
         pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
 
         box_pooler = GRoIE(
+            cfg=cfg,
             output_size=pooler_resolution,
             scales=pooler_scales,
             sampling_ratio=sampling_ratio,
@@ -57,14 +89,12 @@ class GRoIE(ROIPooler):
 
     def __init__ (
         self,
+        cfg,
         *args,**kwargs
     ):
         super().__init__(*args,**kwargs)
-        self.pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1) #definisco convoluzione che serve tra le features
-        
-        self.post_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
-
-
+        self.pre_processing=build_pre_processing(cfg)
+        self.post_processing=build_post_processing(cfg)
 
     def forward(self, x: List[torch.Tensor], box_lists: List[Boxes]):
         
@@ -80,13 +110,12 @@ class GRoIE(ROIPooler):
             roi_features_t = self.level_poolers[i](x[i], pooler_fmt_boxes) #x is feats[i], pooler_fmt_boxes is rois
             
             # apply pre-processing to a RoI extracted from each layer
-            roi_features_t = self.pre_module(roi_features_t)
+            roi_features_t = self.pre_processing(roi_features_t)
 
             # and sum them all
             roi_feats += roi_features_t
-
         #apply post-processing (sum) before return the result
-        roi_feats = self.post_module(roi_feats)
+        roi_feats = self.post_processing(roi_feats)
         return roi_feats
 
 
@@ -111,7 +140,7 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
             cfg,
             input_shape
         )
-
+        
         box_head = build_box_head(
             cfg,
             ShapeSpec(
