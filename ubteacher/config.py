@@ -12,7 +12,7 @@ def add_ubteacher_config(cfg):
     _C.MODEL.RPN.UNSUP_LOSS_WEIGHT = 1.0
     _C.MODEL.RPN.LOSS = "CrossEntropy"
     _C.MODEL.ROI_HEADS.LOSS = "CrossEntropy"
-
+    _C.MODEL.ROI_BOX_EXTRACTOR="ROIPooler"
     _C.SOLVER.IMG_PER_BATCH_LABEL = 1
     _C.SOLVER.IMG_PER_BATCH_UNLABEL = 1
     _C.SOLVER.FACTOR_LIST = (1,)

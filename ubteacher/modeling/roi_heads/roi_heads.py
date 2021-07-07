@@ -19,13 +19,46 @@ import numpy as np
 from detectron2.modeling.poolers import ROIPooler, convert_boxes_to_pooler_format
 
 
+def build_roi_extractor(cfg, input_shape):
+
+    model_type= cfg.MODEL.ROI_BOX_EXTRACTOR
+
+    if model_type == "ROIPooler":
+
+        in_features       = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_scales     = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+
+        box_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+
+    else:
+        in_features       = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_scales     = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+
+        box_pooler = GRoIE(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+    return box_pooler
+
 class GRoIE(ROIPooler): 
 
     def __init__ (
         self,
         *args,**kwargs
     ):
-        
         super().__init__(*args,**kwargs)
         self.pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1) #definisco convoluzione che serve tra le features
         
@@ -65,23 +98,19 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
         # fmt: off
         in_features       = cfg.MODEL.ROI_HEADS.IN_FEATURES
         pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
-        pooler_scales     = tuple(1.0 / input_shape[k].stride for k in in_features)
-        sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
-        pooler_type       = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
-        # fmt: on
+        #pooler_scales     = tuple(1.0 / input_shape[k].stride for k in in_features)
+        #sampling_ratio    = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
 
+        # fmt: on
         in_channels = [input_shape[f].channels for f in in_features]
         # Check all channel counts are equal
         assert len(set(in_channels)) == 1, in_channels
         in_channels = in_channels[0]
 
-        box_pooler = GRoIE(
-            output_size=pooler_resolution,
-            scales=pooler_scales,
-            sampling_ratio=sampling_ratio,
-            pooler_type=pooler_type,
-        ) 
-
+        box_pooler = build_roi_extractor(
+            cfg,
+            input_shape
+        )
 
         box_head = build_box_head(
             cfg,
