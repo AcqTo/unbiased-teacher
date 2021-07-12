@@ -3,3 +3,4 @@ MODEL:
     ROI_BOX_EXTRACTOR: "GRoIE"
     ROI_CONV_PRE: "Conv7"
     ROI_CONV_POST: "NL"   #"conv5"
+    NN_LOCAL_BLOCK_POST: 5,2

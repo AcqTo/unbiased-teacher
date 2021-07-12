@@ -29,6 +29,7 @@ def build_pre_processing(cfg):
     
     conv_type=cfg.MODEL.ROI_CONV_PRE
 
+
     if conv_type == "Conv3":
         pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
     
@@ -40,7 +41,7 @@ def build_pre_processing(cfg):
         
     elif conv_type == "NL":
         
-        post_module=NONLocalBlock2D(256)
+        pre_module=NONLocalBlock2D(256, sub_sample=False, kernel_size = cfg.MODEL.NN_LOCAL_BLOCK_PRE[0], padding=cfg.MODEL.NN_LOCAL_BLOCK_PRE[1])
     
     return pre_module
 
@@ -58,7 +59,7 @@ def build_post_processing(cfg):
         post_module=torch.nn.Conv2d(256,256,kernel_size=7,padding=3)
         
     elif conv_type == "NL":
-        post_module=NONLocalBlock2D(256)
+        post_module=NONLocalBlock2D(256, sub_sample=False, kernel_size = cfg.MODEL.NN_LOCAL_BLOCK_POST[0], padding=cfg.MODEL.NN_LOCAL_BLOCK_POST[1])
 
     return post_module
 
@@ -134,7 +135,14 @@ class GRoIE(ROIPooler):
 
 
 class _NonLocalBlockND(nn.Module):
-    def __init__(self, in_channels, inter_channels=None, dimension=3, sub_sample=True, bn_layer=True):
+    def __init__(self, 
+                in_channels, 
+                inter_channels=None, 
+                dimension=3, 
+                sub_sample=True, 
+                bn_layer=True,
+                kernel_size=3,
+                padding=1):
         super(_NonLocalBlockND, self).__init__()
 
         assert dimension in [1, 2, 3]
@@ -150,7 +158,7 @@ class _NonLocalBlockND(nn.Module):
             if self.inter_channels == 0:
                 self.inter_channels = 1
 
-        if dimension == 3:
+        if dimension == 3: #Non serve
             conv_nd = nn.Conv3d
             max_pool_layer = nn.MaxPool3d(kernel_size=(1, 2, 2))
             bn = nn.BatchNorm3d
@@ -158,32 +166,33 @@ class _NonLocalBlockND(nn.Module):
             conv_nd = nn.Conv2d
             max_pool_layer = nn.MaxPool2d(kernel_size=(2, 2))
             bn = nn.BatchNorm2d
-        else:
+        else: #Non serve
             conv_nd = nn.Conv1d
             max_pool_layer = nn.MaxPool1d(kernel_size=(2))
             bn = nn.BatchNorm1d
 
         self.g = conv_nd(in_channels=self.in_channels, out_channels=self.inter_channels,
-                         kernel_size=1, stride=1, padding=0)
+                         kernel_size=kernel_size, stride=1, padding=padding)
 
         if bn_layer:
             self.W = nn.Sequential(
                 conv_nd(in_channels=self.inter_channels, out_channels=self.in_channels,
-                        kernel_size=1, stride=1, padding=0),
+                        kernel_size=kernel_size, stride=1, padding=padding),
                 bn(self.in_channels)
             )
             nn.init.constant(self.W[1].weight, 0)
             nn.init.constant(self.W[1].bias, 0)
         else:
             self.W = conv_nd(in_channels=self.inter_channels, out_channels=self.in_channels,
-                             kernel_size=1, stride=1, padding=0)
+                             kernel_size=kernel_size, stride=1, padding=padding)
             nn.init.constant(self.W.weight, 0)
             nn.init.constant(self.W.bias, 0)
 
         self.theta = conv_nd(in_channels=self.in_channels, out_channels=self.inter_channels,
-                             kernel_size=1, stride=1, padding=0)
+                             kernel_size=kernel_size, stride=1, padding=padding)
+                             
         self.phi = conv_nd(in_channels=self.in_channels, out_channels=self.inter_channels,
-                           kernel_size=1, stride=1, padding=0)
+                           kernel_size=kernel_size, stride=1, padding=padding)
 
         if sub_sample:
             self.g = nn.Sequential(self.g, max_pool_layer)
@@ -216,11 +225,13 @@ class _NonLocalBlockND(nn.Module):
 
 
 class NONLocalBlock2D(_NonLocalBlockND):
-    def __init__(self, in_channels, inter_channels=None, sub_sample=True, bn_layer=True):
+    def __init__(self, in_channels, inter_channels=None, sub_sample=True, bn_layer=True, kernel_size=3, padding=1):
         super(NONLocalBlock2D, self).__init__(in_channels,
                                               inter_channels=inter_channels,
                                               dimension=2, sub_sample=sub_sample,
-                                              bn_layer=bn_layer)
+                                              bn_layer=bn_layer,
+                                              kernel_size=kernel_size,
+                                              padding=padding)
 
 
 @ROI_HEADS_REGISTRY.register()
@@ -243,7 +254,7 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
             cfg,
             input_shape
         )
-        import ipdb; ipdb.set_trace()
+        
         box_head = build_box_head(
             cfg,
             ShapeSpec(
