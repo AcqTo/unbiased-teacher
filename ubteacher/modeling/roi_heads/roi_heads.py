@@ -124,7 +124,7 @@ class GRoIE(ROIPooler):
         for i in range(num_level_assignments):
             roi_features_t = self.level_poolers[i](x[i], pooler_fmt_boxes) #x is feats[i], pooler_fmt_boxes is rois
             
-            # apply pre-processing to a RoI extracted from each layer
+            #apply pre-processing to a RoI extracted from each layer
             roi_features_t = self.pre_processing(roi_features_t)
 
             # and sum them all
@@ -166,10 +166,6 @@ class _NonLocalBlockND(nn.Module):
             conv_nd = nn.Conv2d
             max_pool_layer = nn.MaxPool2d(kernel_size=(2, 2))
             bn = nn.BatchNorm2d
-        else: #Non serve
-            conv_nd = nn.Conv1d
-            max_pool_layer = nn.MaxPool1d(kernel_size=(2))
-            bn = nn.BatchNorm1d
 
         self.g = conv_nd(in_channels=self.in_channels, out_channels=self.inter_channels,
                          kernel_size=kernel_size, stride=1, padding=padding)
