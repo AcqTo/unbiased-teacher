@@ -9,26 +9,133 @@ from detectron2.modeling.proposal_generator.proposal_utils import (
 from torch import nn 
 from torch.nn import functional as F
 
+from detectron2.config import configurable
 from detectron2.utils.events import get_event_storage
 from detectron2.modeling.roi_heads.box_head import build_box_head
 from detectron2.layers import ShapeSpec
 from detectron2.modeling.roi_heads import (
     ROI_HEADS_REGISTRY,
     StandardROIHeads,
+    CascadeROIHeads,
 )
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
+
 from ubteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayers
 
 import numpy as np
 from detectron2.modeling.poolers import ROIPooler, convert_boxes_to_pooler_format
+from detectron2.modeling.matcher import Matcher
 
 
+@ROI_HEADS_REGISTRY.register()
+class R3ROIHEADS(CascadeROIHeads):
+    """
+    The ROI heads that implement :paper:`Cascade R-CNN`.
+    """
+    @configurable
+    def __init__(
+        #cascade originale chiama le variabili che sono def qui
+        self,
+        *,
+        stages,
+        **kwargs,
+    ):
+        """
+        NOTE: this interface is experimental.
+        Args:
+            box_pooler (ROIPooler): pooler that extracts region features from given boxes
+            box_heads (list[nn.Module]): box head for each cascade stage
+            box_predictors (list[nn.Module]): box predictor for each cascade stage
+            proposal_matchers (list[Matcher]): matcher with different IoU thresholds to
+                match boxes with ground truth for each stage. The first matcher matches
+                RPN proposals with ground truth, the other matchers use boxes predicted
+                by the previous stage as proposals and match them with ground truth.
+        """
+        assert "proposal_matcher" not in kwargs, (
+            "CascadeROIHeads takes 'proposal_matchers=' for each stage instead "
+            "of one 'proposal_matcher='."
+        )
+        #The first matcher matches RPN proposals with ground truth, done in the base class
+        self.stages=stages
 
+        super().__init__(
+            **kwargs,
+        )
+        self.num_cascade_stages=len(stages)
+
+    @classmethod
+    def _init_box_head(cls, cfg, input_shape):
+        #Inizializzo le variabili che sono nella cascade originale di detectron2
+        ret=super()._init_box_head(
+            cfg,
+            input_shape
+        )
+        #aggiungo alle variabili originali la var stages con dentro quella della configurazione
+        ret["stages"]=cfg.MODEL.ROI_STAGES
+
+        return ret
+
+    def _forward_box(self, features, proposals, targets=None):
+        """
+        Args:
+            features, targets: the same as in
+                Same as in :meth:`ROIHeads.forward`.
+            proposals (list[Instances]): the per-image object proposals with
+                their matching ground truth.
+                Each has fields "proposal_boxes", and "objectness_logits",
+                "gt_classes", "gt_boxes".
+        """
+        features = [features[f] for f in self.box_in_features]
+        head_outputs = []  # (predictor, predictions, proposals)
+        prev_pred_boxes = None
+        image_sizes = [x.image_size for x in proposals]
+        for k in range(self.num_cascade_stages):
+            import ipdb; ipdb.set_trace()
+            idx=self.stages[k]
+            
+            if k > 0:
+                # The output boxes of the previous stage are used to create the input
+                # proposals of the next stage.
+                proposals = self._create_proposals_from_boxes(prev_pred_boxes, image_sizes)
+                if self.training:
+                    proposals = self._match_and_label_boxes(proposals, idx, targets)
+            predictions = self._run_stage(features, proposals, idx)
+            prev_pred_boxes = self.box_predictor[idx].predict_boxes(predictions, proposals)
+            head_outputs.append((self.box_predictor[idx], predictions, proposals))
+
+        if self.training:
+            losses = {}
+            storage = get_event_storage()
+            for stage, (predictor, predictions, proposals) in enumerate(head_outputs):
+                with storage.name_scope("stage{}".format(stage)):
+                    stage_losses = predictor.losses(predictions, proposals)
+                losses.update({k + "_stage{}".format(stage): v for k, v in stage_losses.items()})
+            return losses
+        else:
+            # Each is a list[Tensor] of length #image. Each tensor is Ri x (K+1)
+            scores_per_stage = [h[0].predict_probs(h[1], h[2]) for h in head_outputs]
+
+            # Average the scores across heads
+            scores = [
+                sum(list(scores_per_image)) * (1.0 / self.num_cascade_stages)
+                for scores_per_image in zip(*scores_per_stage)
+            ]
+            # Use the boxes of the last head
+            predictor, predictions, proposals = head_outputs[-1]
+            boxes = predictor.predict_boxes(predictions, proposals)
+            pred_instances, _ = fast_rcnn_inference(
+                boxes,
+                scores,
+                image_sizes,
+                predictor.test_score_thresh,
+                predictor.test_nms_thresh,
+                predictor.test_topk_per_image,
+            )
+            return pred_instances
 
 def build_pre_processing(cfg):
     
     conv_type=cfg.MODEL.ROI_CONV_PRE
-
 
     if conv_type == "Conv3":
         pre_module=torch.nn.Conv2d(256,256,kernel_size=3,padding=1)
