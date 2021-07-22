@@ -1,0 +1,6 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-BASE.yaml"
+MODEL:
+    ROI_HEADS:
+        NAME: "R3ROIHEADS"
+    ROI_BOX_HEAD:
+        CLS_AGNOSTIC_BBOX_REG: True
