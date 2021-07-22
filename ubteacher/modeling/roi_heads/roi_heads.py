@@ -18,6 +18,8 @@ from detectron2.modeling.roi_heads import (
     StandardROIHeads,
     CascadeROIHeads,
 )
+
+from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 
 from ubteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayers
@@ -37,6 +39,11 @@ class R3ROIHEADS(CascadeROIHeads):
         #cascade originale chiama le variabili che sono def qui
         self,
         *,
+        box_in_features: List[str],
+        box_pooler: ROIPooler,
+        box_heads: List[nn.Module],
+        box_predictors: List[nn.Module],
+        proposal_matchers: List[Matcher],
         stages,
         **kwargs,
     ):
@@ -58,24 +65,96 @@ class R3ROIHEADS(CascadeROIHeads):
         #The first matcher matches RPN proposals with ground truth, done in the base class
         self.stages=stages
 
-        super().__init__(
+        assert "proposal_matcher" not in kwargs, (
+            "CascadeROIHeads takes 'proposal_matchers=' for each stage instead "
+            "of one 'proposal_matcher='."
+        )
+        # The first matcher matches RPN proposals with ground truth, done in the base class
+        kwargs["proposal_matcher"] = proposal_matchers[0]
+        #num_stages = self.num_cascade_stages = len(box_heads)
+        box_heads = nn.ModuleList(box_heads)
+        box_predictors = nn.ModuleList(box_predictors)
+
+        super(CascadeROIHeads, self).__init__(
+            box_in_features=box_in_features,
+            box_pooler=box_pooler,
+            box_head=box_heads,
+            box_predictor=box_predictors,
             **kwargs,
         )
-        import ipdb; ipdb.set_trace()
+        self.proposal_matchers = proposal_matchers
         self.num_cascade_stages=len(stages)
 
     @classmethod
     def _init_box_head(cls, cfg, input_shape):
-        #Inizializzo le variabili che sono nella cascade originale di detectron2
-        ret=super()._init_box_head(
-            cfg,
-            input_shape
-        )
-        #aggiungo alle variabili originali la var stages con dentro quella della configurazione
-        ret["stages"]=cfg.MODEL.ROI_STAGES
+        # fmt: off
+        in_features              = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        pooler_resolution        = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_scales            = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio           = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type              = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        cascade_bbox_reg_weights = cfg.MODEL.ROI_BOX_CASCADE_HEAD.BBOX_REG_WEIGHTS
+        cascade_ious             = cfg.MODEL.ROI_BOX_CASCADE_HEAD.IOUS
+        stages                   = cfg.MODEL.ROI_STAGES
+        assert len(cascade_bbox_reg_weights) == len(cascade_ious)
+        assert cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,  \
+            "CascadeROIHeads only support class-agnostic regression now!"
+        assert cascade_ious[0] == cfg.MODEL.ROI_HEADS.IOU_THRESHOLDS[0]
+        # fmt: on
 
-        return ret
-    
+        in_channels = [input_shape[f].channels for f in in_features]
+        # Check all channel counts are equal
+        assert len(set(in_channels)) == 1, in_channels
+        in_channels = in_channels[0]
+
+        box_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+        pooled_shape = ShapeSpec(
+            channels=in_channels, width=pooler_resolution, height=pooler_resolution
+        )
+
+        box_heads, box_predictors, proposal_matchers = [], [], []
+        
+        for i in range(len(set(stages))):
+            # FIXME check bbox_reg_weights
+            bbox_reg_weights = cascade_bbox_reg_weights[i]
+            box_head = build_box_head(cfg, pooled_shape)
+            box_heads.append(box_head)
+            box_predictors.append(
+                FastRCNNOutputLayers(
+                    cfg,
+                    box_head.output_shape,
+                    box2box_transform=Box2BoxTransform(weights=bbox_reg_weights),
+                )
+            )
+        for match_iou in cascade_ious:
+            proposal_matchers.append(Matcher([match_iou], [0,1], allow_low_quality_matches=False))
+
+        return {
+            "box_in_features": in_features,
+            "box_pooler": box_pooler,
+            "box_heads": box_heads,
+            "box_predictors": box_predictors,
+            "proposal_matchers": proposal_matchers,
+            "stages":stages,
+        }
+
+    # @classmethod
+    # def _init_box_head(cls, cfg, input_shape):
+    #     #Inizializzo le variabili che sono nella cascade originale di detectron2
+    #     ret=super()._init_box_head(
+    #         cfg,
+    #         input_shape
+    #     )
+    #     #aggiungo alle variabili originali la var stages con dentro quella della configurazione
+    #     ret["stages"]=cfg.MODEL.ROI_STAGES
+
+    #     return ret
+
     def forward(
         self,
         images: ImageList,
@@ -86,7 +165,6 @@ class R3ROIHEADS(CascadeROIHeads):
         branch="",
         compute_val_loss=False,
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
-
         del images
         if self.training and compute_loss:  # apply if training loss
             assert targets
