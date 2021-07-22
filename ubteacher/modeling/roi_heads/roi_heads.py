@@ -61,6 +61,7 @@ class R3ROIHEADS(CascadeROIHeads):
         super().__init__(
             **kwargs,
         )
+        import ipdb; ipdb.set_trace()
         self.num_cascade_stages=len(stages)
 
     @classmethod
@@ -74,8 +75,55 @@ class R3ROIHEADS(CascadeROIHeads):
         ret["stages"]=cfg.MODEL.ROI_STAGES
 
         return ret
+    
+    def forward(
+        self,
+        images: ImageList,
+        features: Dict[str, torch.Tensor],
+        proposals: List[Instances],
+        targets: Optional[List[Instances]] = None,
+        compute_loss=True,
+        branch="",
+        compute_val_loss=False,
+    ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
 
-    def _forward_box(self, features, proposals, targets=None):
+        del images
+        if self.training and compute_loss:  # apply if training loss
+            assert targets
+            # 1000 --> 512
+            proposals = self.label_and_sample_proposals(
+                proposals, targets, branch=branch
+            )
+        elif compute_val_loss:  # apply if val loss
+            assert targets
+            # 1000 --> 512
+            temp_proposal_append_gt = self.proposal_append_gt
+            self.proposal_append_gt = False
+            proposals = self.label_and_sample_proposals(
+                proposals, targets, branch=branch
+            )
+            #do not apply target on proposals
+            self.proposal_append_gt = temp_proposal_append_gt
+
+        if (self.training and compute_loss) or compute_val_loss:
+            losses, _ = self._forward_box(
+                features, proposals, targets, compute_loss, compute_val_loss, branch
+            )
+            return proposals, losses
+        else:
+            pred_instances, predictions = self._forward_box(
+                features, proposals, targets, compute_loss, compute_val_loss, branch
+            )
+            return pred_instances, predictions
+
+    def _forward_box(
+        self,
+        features,
+        proposals,
+        targets=None,
+        compute_loss: bool = True,
+        compute_val_loss: bool = False,
+        branch: str = ""):
         """
         Args:
             features, targets: the same as in
@@ -89,8 +137,9 @@ class R3ROIHEADS(CascadeROIHeads):
         head_outputs = []  # (predictor, predictions, proposals)
         prev_pred_boxes = None
         image_sizes = [x.image_size for x in proposals]
+        
         for k in range(self.num_cascade_stages):
-            import ipdb; ipdb.set_trace()
+            
             idx=self.stages[k]
             
             if k > 0:
@@ -98,19 +147,20 @@ class R3ROIHEADS(CascadeROIHeads):
                 # proposals of the next stage.
                 proposals = self._create_proposals_from_boxes(prev_pred_boxes, image_sizes)
                 if self.training:
-                    proposals = self._match_and_label_boxes(proposals, idx, targets)
+                    proposals = self._match_and_label_boxes(proposals, k, targets)
             predictions = self._run_stage(features, proposals, idx)
             prev_pred_boxes = self.box_predictor[idx].predict_boxes(predictions, proposals)
             head_outputs.append((self.box_predictor[idx], predictions, proposals))
 
-        if self.training:
+
+        if (self.training and compute_loss) or compute_val_loss:  # apply if training loss or val loss
             losses = {}
             storage = get_event_storage()
             for stage, (predictor, predictions, proposals) in enumerate(head_outputs):
                 with storage.name_scope("stage{}".format(stage)):
                     stage_losses = predictor.losses(predictions, proposals)
                 losses.update({k + "_stage{}".format(stage): v for k, v in stage_losses.items()})
-            return losses
+            return losses, predictions
         else:
             # Each is a list[Tensor] of length #image. Each tensor is Ri x (K+1)
             scores_per_stage = [h[0].predict_probs(h[1], h[2]) for h in head_outputs]
@@ -131,7 +181,63 @@ class R3ROIHEADS(CascadeROIHeads):
                 predictor.test_nms_thresh,
                 predictor.test_topk_per_image,
             )
-            return pred_instances
+            return pred_instances, predictions
+
+    @torch.no_grad()
+    def label_and_sample_proposals(
+        self,
+        proposals: List[Instances],
+        targets: List[Instances],
+        branch: str = ""
+    ) -> List[Instances]:
+        #Same as StandardROIHeadsPseudoLab 
+        gt_boxes = [x.gt_boxes for x in targets]
+        if self.proposal_append_gt:
+            proposals = add_ground_truth_to_proposals(gt_boxes, proposals)
+
+        proposals_with_gt = []
+
+        num_fg_samples = []
+        num_bg_samples = []
+        for proposals_per_image, targets_per_image in zip(proposals, targets):
+            has_gt = len(targets_per_image) > 0
+            match_quality_matrix = pairwise_iou(
+                targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+            )
+            matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+            sampled_idxs, gt_classes = self._sample_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes
+            )
+
+            proposals_per_image = proposals_per_image[sampled_idxs]
+            proposals_per_image.gt_classes = gt_classes
+
+            if has_gt:
+                sampled_targets = matched_idxs[sampled_idxs]
+                for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                    if trg_name.startswith("gt_") and not proposals_per_image.has(
+                        trg_name
+                    ):
+                        proposals_per_image.set(trg_name, trg_value[sampled_targets])
+            else:
+                gt_boxes = Boxes(
+                    targets_per_image.gt_boxes.tensor.new_zeros((len(sampled_idxs), 4))
+                )
+                proposals_per_image.gt_boxes = gt_boxes
+
+            num_bg_samples.append((gt_classes == self.num_classes).sum().item())
+            num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
+            proposals_with_gt.append(proposals_per_image)
+
+        storage = get_event_storage()
+        storage.put_scalar(
+            "roi_head/num_target_fg_samples_" + branch, np.mean(num_fg_samples)
+        )
+        storage.put_scalar(
+            "roi_head/num_target_bg_samples_" + branch, np.mean(num_bg_samples)
+        )
+
+        return proposals_with_gt
 
 def build_pre_processing(cfg):
     
@@ -433,9 +539,7 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
         predictions = self.box_predictor(box_features)
         del box_features
 
-        if (
-            self.training and compute_loss
-        ) or compute_val_loss:  # apply if training loss or val loss
+        if (self.training and compute_loss) or compute_val_loss:  # apply if training loss or val loss
             losses = self.box_predictor.losses(predictions, proposals)
 
             if self.train_on_pred_boxes:
@@ -455,7 +559,10 @@ class StandardROIHeadsPseudoLab(StandardROIHeads):
 
     @torch.no_grad()
     def label_and_sample_proposals(
-        self, proposals: List[Instances], targets: List[Instances], branch: str = ""
+        self,
+        proposals: List[Instances],
+        targets: List[Instances],
+        branch: str = ""
     ) -> List[Instances]:
         gt_boxes = [x.gt_boxes for x in targets]
         if self.proposal_append_gt:
