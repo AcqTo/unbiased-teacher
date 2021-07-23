@@ -16,8 +16,9 @@ from detectron2.layers import ShapeSpec
 from detectron2.modeling.roi_heads import (
     ROI_HEADS_REGISTRY,
     StandardROIHeads,
-    CascadeROIHeads,
 )
+
+from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads
 
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
@@ -143,17 +144,6 @@ class R3ROIHEADS(CascadeROIHeads):
             "stages":stages,
         }
 
-    # @classmethod
-    # def _init_box_head(cls, cfg, input_shape):
-    #     #Inizializzo le variabili che sono nella cascade originale di detectron2
-    #     ret=super()._init_box_head(
-    #         cfg,
-    #         input_shape
-    #     )
-    #     #aggiungo alle variabili originali la var stages con dentro quella della configurazione
-    #     ret["stages"]=cfg.MODEL.ROI_STAGES
-
-    #     return ret
 
     def forward(
         self,
