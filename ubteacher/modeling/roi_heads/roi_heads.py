@@ -401,6 +401,7 @@ class GRoIE(ROIPooler):
         roi_feats = x[0].new_zeros(
             pooler_fmt_boxes.size(0), num_channels, output_size, output_size)
     
+        
         #Apply the pooler to a levele and extract the features
         for i in range(num_level_assignments):
             roi_features_t = self.level_poolers[i](x[i], pooler_fmt_boxes) #x is feats[i], pooler_fmt_boxes is rois
@@ -408,10 +409,15 @@ class GRoIE(ROIPooler):
             #apply pre-processing to a RoI extracted from each layer
             roi_features_t = self.pre_processing(roi_features_t)
 
+            roi_features_t = nn.ReLU()(roi_features_t)
+
             # and sum them all
             roi_feats += roi_features_t
         #apply post-processing (sum) before return the result
         roi_feats = self.post_processing(roi_feats)
+
+        roi_feats = nn.ReLU()(roi_feats)
+
         return roi_feats
 
 
