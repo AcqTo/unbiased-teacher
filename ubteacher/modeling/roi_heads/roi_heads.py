@@ -21,9 +21,10 @@ from detectron2.modeling.roi_heads import (
 from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads
 
 from detectron2.modeling.box_regression import Box2BoxTransform
-from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
+from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers, fast_rcnn_inference
 
 from ubteacher.modeling.roi_heads.fast_rcnn import FastRCNNFocaltLossOutputLayers
+
 
 import numpy as np
 from detectron2.modeling.poolers import ROIPooler, convert_boxes_to_pooler_format
@@ -202,7 +203,7 @@ class R3ROIHEADS(CascadeROIHeads):
                 "gt_classes", "gt_boxes".
         """
         features = [features[f] for f in self.box_in_features]
-        head_outputs = []  # (predictor, predictions, proposals)
+        head_outputs = []  #(predictor, predictions, proposals)
         prev_pred_boxes = None
         image_sizes = [x.image_size for x in proposals]
         
@@ -214,14 +215,16 @@ class R3ROIHEADS(CascadeROIHeads):
                 # The output boxes of the previous stage are used to create the input
                 # proposals of the next stage.
                 proposals = self._create_proposals_from_boxes(prev_pred_boxes, image_sizes)
-                if self.training:
+                
+                if (self.training and compute_loss) or compute_val_loss:          #Distingue le fasi di trading e il calcolo della loss 
                     proposals = self._match_and_label_boxes(proposals, k, targets)
+
             predictions = self._run_stage(features, proposals, idx)
             prev_pred_boxes = self.box_predictor[idx].predict_boxes(predictions, proposals)
             head_outputs.append((self.box_predictor[idx], predictions, proposals))
 
 
-        if (self.training and compute_loss) or compute_val_loss:  # apply if training loss or val loss
+        if (self.training and compute_loss) or compute_val_loss:  #apply if training loss or val loss
             losses = {}
             storage = get_event_storage()
             for stage, (predictor, predictions, proposals) in enumerate(head_outputs):
