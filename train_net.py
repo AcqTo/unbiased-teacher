@@ -5,6 +5,7 @@ import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.engine import default_argument_parser, default_setup, launch
+from detectron2.data.datasets import register_coco_instances
 
 from ubteacher import add_ubteacher_config
 from ubteacher.engine.trainer import UBTeacherTrainer, BaselineTrainer
@@ -33,6 +34,8 @@ def setup(args):
 
 def main(args):
     cfg = setup(args)
+    register_coco_instances("instagram_train", {}, "datasets/instagram/annotations/train.json", "datasets/instagram/")
+    register_coco_instances("instagram_val", {}, "datasets/instagram/annotations/val.json", "datasets/instagram/")
     if cfg.SEMISUPNET.Trainer == "ubteacher":
         Trainer = UBTeacherTrainer
     elif cfg.SEMISUPNET.Trainer == "baseline":
