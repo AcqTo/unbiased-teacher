@@ -34,8 +34,10 @@ def setup(args):
 
 def main(args):
     cfg = setup(args)
-    register_coco_instances("instagram_train", {}, "datasets/instagram/annotations/train.json", "datasets/instagram/")
-    register_coco_instances("instagram_val", {}, "datasets/instagram/annotations/val.json", "datasets/instagram/")
+    
+    register_coco_instances("instagram_train", {}, "/home/eleonora/acquaviva/unbiased-teacher/datasets/instagram/annotations/train.json", "datasets/instagram/")
+    register_coco_instances("instagram_val", {}, "/home/eleonora/acquaviva/unbiased-teacher/datasets/instagram/annotations/val.json", "datasets/instagram/")
+
     if cfg.SEMISUPNET.Trainer == "ubteacher":
         Trainer = UBTeacherTrainer
     elif cfg.SEMISUPNET.Trainer == "baseline":

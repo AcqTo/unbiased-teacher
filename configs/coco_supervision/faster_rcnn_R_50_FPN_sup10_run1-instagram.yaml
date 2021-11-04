@@ -1,0 +1,19 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-BASE.yaml"
+DATALOADER:
+    RANDOM_DATA_SEED_PATH: dataseed/instagram_supervision.json
+DATASETS:
+    TEST:
+    - instagram_val
+    TRAIN:
+    - instagram_train
+    TRAIN_LABEL:
+    - instagram_train
+    TRAIN_UNLABEL:
+    - instagram_train
+MODEL:
+    ROI_HEADS:
+        NUM_CLASSES: 9
+TEST:
+    EVAL_PERIOD: 500
+SEMISUPNET:
+    BURN_UP_STEP: 500
