@@ -1,0 +1,10 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-instagram.yaml"
+SOLVER:
+    BASE_LR: 0.005
+    MAX_ITER: 200000
+    IMG_PER_BATCH_LABEL: 2
+    IMG_PER_BATCH_UNLABEL: 2
+    IMS_PER_BATCH: 2
+SEMISUPNET:
+    BURN_UP_STEP: 2000
+
