@@ -1,0 +1,3 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-instagram-v13.yaml"
+SEMISUPNET:
+  TEACHER_UPDATE_ITER: 2
