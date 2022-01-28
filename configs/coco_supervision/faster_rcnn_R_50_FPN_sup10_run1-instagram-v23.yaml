@@ -1,0 +1,6 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-instagram-v15.yaml"
+
+DATALOADER:
+    SUP_PERCENT: 100.0
+SEMISUPNET:
+    BURN_UP_STEP: 50001

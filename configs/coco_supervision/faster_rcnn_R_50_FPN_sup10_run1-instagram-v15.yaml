@@ -1,0 +1,10 @@
+_BASE_: "faster_rcnn_R_50_FPN_sup10_run1-instagram-v2.yaml"
+SOLVER:
+    MAX_ITER: 50000
+TEST:
+    EVAL_PERIOD: 2000
+DATALOADER:
+    SUP_PERCENT: 10.0
+SEMISUPNET:
+    TEACHER_UPDATE_ITER: 1
+    
